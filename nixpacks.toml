@@ -1,0 +1,13 @@
+# Instalación de dependencias del sistema para Puppeteer/Chromium en Railway
+[phases.setup]
+nixPkgs = ['nodejs_20', 'chromium']
+
+[phases.install]
+cmds = ['npm ci --omit=dev']
+
+[start]
+cmd = 'npm start'
+
+[variables]
+PUPPETEER_SKIP_DOWNLOAD = '1'
+PUPPETEER_EXECUTABLE_PATH = '/nix/var/nix/profiles/default/bin/chromium'
