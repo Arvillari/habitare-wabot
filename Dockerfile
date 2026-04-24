@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
 # Que Puppeteer NO descargue su propio Chromium y use el del sistema
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# Fijar puerto — evita mismatch con Railway Target Port
+ENV PORT=3000
+EXPOSE 3000
 
 WORKDIR /app
 
