@@ -169,7 +169,13 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-    res.json({ ok: estadoBot === 'activo', estado: estadoBot, ts: Date.now() });
+    // Siempre 200 mientras el proceso esté vivo — Railway solo mata si el proceso muere
+    res.status(200).json({
+        ok: estadoBot !== 'error_init',
+        estado: estadoBot,
+        conectado: estadoBot === 'activo',
+        ts: Date.now()
+    });
 });
 
 // Mostrar QR en navegador (útil si no ves la terminal de Railway)
