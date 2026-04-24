@@ -3,7 +3,8 @@
 nixPkgs = ['nodejs_20', 'chromium']
 
 [phases.install]
-cmds = ['npm ci --omit=dev']
+# usar npm install (no ci) para tolerar cambios menores en el lock
+cmds = ['npm install --omit=dev']
 
 [start]
 cmd = 'npm start'
