@@ -15,20 +15,37 @@ const qrcode = require('qrcode-terminal');
 // ═══════════════════════════════════════════════════════════════════════
 // CONFIG (desde Railway env vars)
 // ═══════════════════════════════════════════════════════════════════════
-const PORT              = process.env.PORT || 3000;
+const fs = require('fs');
+const path = require('path');
+
+// Puerto HARDCODED a 3000 — evita discrepancias con Target Port de Railway
+const PORT              = 3000;
 const HABITARE_WEBHOOK  = process.env.HABITARE_WEBHOOK_URL;
 const SHARED_SECRET     = process.env.SHARED_SECRET;
-const SESSION_PATH      = process.env.SESSION_PATH || '/data/wwebjs_auth';
+let   SESSION_PATH      = process.env.SESSION_PATH || '/data/wwebjs_auth';
 
 if (!HABITARE_WEBHOOK || !SHARED_SECRET) {
     console.error('❌ Falta variable de entorno: HABITARE_WEBHOOK_URL y/o SHARED_SECRET');
     process.exit(1);
 }
 
+// Si el path configurado no es escribible (no hay volumen montado), fallback a /tmp
+try {
+    fs.mkdirSync(SESSION_PATH, { recursive: true });
+    fs.accessSync(SESSION_PATH, fs.constants.W_OK);
+} catch (e) {
+    const fallback = '/tmp/wwebjs_auth';
+    console.warn(`⚠️  SESSION_PATH "${SESSION_PATH}" no escribible (${e.code}). Fallback a ${fallback}`);
+    console.warn('    SIN VOLUMEN PERSISTENTE la sesión se pierde al reiniciar — tendrás que re-escanear QR.');
+    SESSION_PATH = fallback;
+    fs.mkdirSync(SESSION_PATH, { recursive: true });
+}
+
 console.log('🔧 Config:');
 console.log('  Webhook: ' + HABITARE_WEBHOOK);
 console.log('  Session path: ' + SESSION_PATH);
 console.log('  Port: ' + PORT);
+console.log('  Chromium: ' + (process.env.PUPPETEER_EXECUTABLE_PATH || '(auto)'));
 
 // ═══════════════════════════════════════════════════════════════════════
 // Express API
@@ -239,8 +256,13 @@ app.post('/logout', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════
 // Arranque
 // ═══════════════════════════════════════════════════════════════════════
-app.listen(PORT, () => {
-    console.log(`🌐 HTTP escuchando en puerto ${PORT}`);
+// Escuchar en 0.0.0.0 explícito (Docker) + puerto fijo
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 HTTP escuchando en 0.0.0.0:${PORT} (todas las interfaces)`);
+    console.log(`   GET /          → status básico`);
+    console.log(`   GET /health    → health check`);
+    console.log(`   GET /qr        → QR visual para escanear`);
+    console.log(`   POST /send     → enviar mensaje (con SHARED_SECRET)`);
 });
 
 console.log('🚀 Inicializando WhatsApp client...');
