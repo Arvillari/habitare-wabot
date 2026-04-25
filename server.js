@@ -81,7 +81,7 @@ client.on('qr', (qr) => {
     estadoBot = 'esperando_qr';
     console.log('\n\n📱 ESCANEA ESTE QR CON WHATSAPP DEL NÚMERO DEL BOT:\n');
     qrcode.generate(qr, { small: true });
-    console.log('\n  (Ve también a /qr para verlo en navegador si prefieres.)\n');
+    console.log('\n  (Ve también a https://habitare-wabot-production.up.railway.app/qr para verlo en navegador si prefieres.)\n');
 });
 
 client.on('loading_screen', (percent, msg) => {
@@ -120,7 +120,7 @@ client.on('disconnected', (reason) => {
 client.on('message', async (msg) => {
     if (msg.fromMe) return;          // ignorar mensajes propios
     if (msg.isStatus) return;         // ignorar status
-    if (!msg.from.endsWith('@c.us')) return;  // solo chats personales (no grupos por ahora)
+    if (msg.from.endsWith('@g.us')) return;  // ignorar grupos
 
     try {
         const contact = await msg.getContact().catch(() => ({}));
