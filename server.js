@@ -46,6 +46,20 @@ console.log('  Webhook: ' + HABITARE_WEBHOOK);
 console.log('  Session path: ' + SESSION_PATH);
 console.log('  Port: ' + PORT);
 console.log('  Chromium: ' + (process.env.PUPPETEER_EXECUTABLE_PATH || '(auto)'));
+// Limpiar locks huérfanos de Chromium (de containers previos)                                                                               
+  function cleanChromiumLocks(dir) {                                                                                                           
+      try {                                              
+          if (!fs.existsSync(dir)) return;                                                                                                     
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+              const p = path.join(dir, e.name);                                                                                                
+              if (e.isDirectory()) cleanChromiumLocks(p);                                                                                      
+              else if (['SingletonLock','SingletonCookie','SingletonSocket','lockfile'].includes(e.name)) {
+                  try { fs.unlinkSync(p); console.log(`🔓 lock huérfano eliminado: ${p}`); } catch (_) {}                                      
+              }                                          
+          }                                                                                                                                    
+      } catch (e) { console.warn('⚠️   cleanLocks:', e.message); }                                                                              
+  }                                
+  cleanChromiumLocks(SESSION_PATH);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Express API
