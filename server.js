@@ -46,20 +46,21 @@ console.log('  Webhook: ' + HABITARE_WEBHOOK);
 console.log('  Session path: ' + SESSION_PATH);
 console.log('  Port: ' + PORT);
 console.log('  Chromium: ' + (process.env.PUPPETEER_EXECUTABLE_PATH || '(auto)'));
-// Limpiar locks huérfanos de Chromium (de containers previos)                                                                               
-  function cleanChromiumLocks(dir) {                                                                                                           
-      try {                                              
-          if (!fs.existsSync(dir)) return;                                                                                                     
-          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-              const p = path.join(dir, e.name);                                                                                                
-              if (e.isDirectory()) cleanChromiumLocks(p);                                                                                      
-              else if (['SingletonLock','SingletonCookie','SingletonSocket','lockfile'].includes(e.name)) {
-                  try { fs.unlinkSync(p); console.log(`🔓 lock huérfano eliminado: ${p}`); } catch (_) {}                                      
-              }                                          
-          }                                                                                                                                    
-      } catch (e) { console.warn('⚠️   cleanLocks:', e.message); }                                                                              
-  }                                
-  cleanChromiumLocks(SESSION_PATH);
+
+// Limpiar locks huérfanos de Chromium (de containers previos)
+function cleanChromiumLocks(dir) {
+    try {
+        if (!fs.existsSync(dir)) return;
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) cleanChromiumLocks(p);
+            else if (['SingletonLock','SingletonCookie','SingletonSocket','lockfile'].includes(e.name)) {
+                try { fs.unlinkSync(p); console.log(`🔓 lock huérfano eliminado: ${p}`); } catch (_) {}
+            }
+        }
+    } catch (e) { console.warn('⚠️  cleanLocks:', e.message); }
+}
+cleanChromiumLocks(SESSION_PATH);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Express API
@@ -95,7 +96,7 @@ client.on('qr', (qr) => {
     estadoBot = 'esperando_qr';
     console.log('\n\n📱 ESCANEA ESTE QR CON WHATSAPP DEL NÚMERO DEL BOT:\n');
     qrcode.generate(qr, { small: true });
-    console.log('\n  (Ve también a https://habitare-wabot-production.up.railway.app/qr para verlo en navegador si prefieres.)\n');
+    console.log('\n  (Ve también a /qr para verlo en navegador si prefieres.)\n');
 });
 
 client.on('loading_screen', (percent, msg) => {
@@ -136,15 +137,29 @@ client.on('message', async (msg) => {
     if (msg.isStatus) return;         // ignorar status
     if (msg.from.endsWith('@g.us')) return;  // ignorar grupos
 
+    console.log(`📥 mensaje recibido: from=${msg.from} type=${msg.type} hasMedia=${msg.hasMedia} body="${(msg.body||'').substring(0,60)}"`);
+
     try {
         const contact = await msg.getContact().catch(() => ({}));
-        const numero = msg.from.replace(/@c\.us$/, '');
+
+        // Resolver número telefónico real, no el LID sintético de Multi-Device.
+        // Prioridad: contact.number > id.user > strip @c.us/@lid del from.
+        let numero = '';
+        if (contact && contact.number) {
+            numero = String(contact.number).replace(/[^\d]/g, '');
+        } else if (contact && contact.id && contact.id.user) {
+            numero = String(contact.id.user).replace(/[^\d]/g, '');
+        }
+        if (!numero) {
+            numero = msg.from.replace(/@(c\.us|lid)$/, '').replace(/[^\d]/g, '');
+        }
 
         const payload = {
             secret: SHARED_SECRET,
-            from: msg.from,
-            numero: numero,                   // "521998xxx" (sin +)
-            numero_mx: '+' + numero,          // "+521998xxx"
+            from: msg.from,                   // identidad cruda (puede ser @lid)
+            numero: numero,                   // "5219987xxx" telefónico real
+            numero_mx: '+' + numero,
+            lid: msg.from.endsWith('@lid') ? msg.from.replace(/@lid$/, '') : null,
             text: msg.body || '',
             name: contact.pushname || contact.name || contact.shortName || '',
             timestamp: msg.timestamp,
@@ -239,9 +254,11 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        // Normalizar número a formato wa: solo dígitos, con LADA país
+        // Normalizar número a formato wa: solo dígitos, con LADA país y "1" celular MX si aplica
         let num = String(numero).replace(/[^\d]/g, '');
-        if (num.length === 10) num = '52' + num;   // México default
+        if (num.length === 10) num = '521' + num;             // celular MX local → +521
+        else if (num.length === 12 && num.startsWith('52'))    // 52 + 10 dig → falta el "1" celular
+             num = '521' + num.substring(2);
         const chatId = num + '@c.us';
 
         let sent;
@@ -284,3 +301,29 @@ client.initialize().catch((err) => {
     console.error('❌ Error al inicializar:', err);
     estadoBot = 'error_init';
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Heartbeat → Habitare (cada 5 min). Permite al watchdog detectar
+// "bot zombie" (HTTP responde pero el cliente WA no procesa).
+// ═══════════════════════════════════════════════════════════════════════
+const HEARTBEAT_URL = HABITARE_WEBHOOK.replace(/whatsapp_webhook\.php.*$/, 'wabot_heartbeat.php');
+async function enviarHeartbeat() {
+    try {
+        await fetch(HEARTBEAT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                secret: SHARED_SECRET,
+                estado: estadoBot,
+                conectado: estadoBot === 'activo',
+                tiene_qr_pendiente: !!ultimoQR,
+                ts: Date.now()
+            }),
+            signal: AbortSignal.timeout(10000)
+        });
+    } catch (e) {
+        console.warn('⚠️  heartbeat falló:', e.message);
+    }
+}
+setInterval(enviarHeartbeat, 5 * 60 * 1000); // cada 5 min
+setTimeout(enviarHeartbeat, 30 * 1000);      // primero a los 30s tras boot
