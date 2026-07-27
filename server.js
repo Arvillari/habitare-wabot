@@ -11,6 +11,7 @@
 const express = require('express');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRImage = require('qrcode');   // render del QR como imagen (escaneable, sin terceros)
 
 // ═══════════════════════════════════════════════════════════════════════
 // CONFIG (desde Railway env vars)
@@ -225,17 +226,25 @@ app.get('/health', (req, res) => {
 });
 
 // Mostrar QR en navegador (útil si no ves la terminal de Railway)
-app.get('/qr', (req, res) => {
+app.get('/qr', async (req, res) => {
     if (!ultimoQR) return res.send('<h1>No hay QR pendiente</h1><p>Estado: ' + estadoBot + '</p>');
-    const url = 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=' + encodeURIComponent(ultimoQR);
+    let img;
+    try {
+        // Render LOCAL (adiós qrserver.com, que además recibía la credencial de vinculación).
+        // ecc 'L' = la misma que usa WhatsApp → QR menos denso y más fácil de escanear;
+        // margin 4 = zona de silencio (arregla las "líneas vacías"); 512px = nítido.
+        img = await QRImage.toDataURL(ultimoQR, { errorCorrectionLevel: 'L', margin: 4, width: 512 });
+    } catch (e) {
+        return res.send('<h1>Error generando QR</h1><pre>' + String((e && e.message) || e) + '</pre>');
+    }
     res.send(`
         <!DOCTYPE html><html><head><title>WhatsApp QR</title>
-        <meta http-equiv="refresh" content="15"></head>
+        <meta http-equiv="refresh" content="20"></head>
         <body style="background:#111;color:#eee;font-family:sans-serif;text-align:center;padding:30px;">
             <h1>Escanea con WhatsApp del bot</h1>
-            <p>Abre WhatsApp → Ajustes → Dispositivos vinculados → Vincular</p>
-            <img src="${url}" style="background:white;padding:16px;border-radius:8px;margin:20px;">
-            <p style="color:#888;font-size:12px;">Se refresca cada 15s. Estado: ${estadoBot}</p>
+            <p>Abre WhatsApp → Ajustes → Dispositivos vinculados → Vincular un dispositivo</p>
+            <img src="${img}" width="512" height="512" style="background:white;padding:16px;border-radius:8px;margin:20px;max-width:90vw;height:auto;">
+            <p style="color:#888;font-size:12px;">Se refresca cada 20s. Estado: ${estadoBot}</p>
         </body></html>
     `);
 });
