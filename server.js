@@ -169,19 +169,42 @@ client.on('message', async (msg) => {
             type: msg.type
         };
 
-        // Adjuntar media si es imagen/documento (cap a 5 MB)
+        // Adjuntar media si es imagen/documento.
+        // ⚑ downloadMedia() de whatsapp-web.js falla intermitentemente con "Evaluation failed: r"
+        //    (sobre todo con remitentes @lid): el 1er intento truena y el 2º/3º pasa. Reintentamos,
+        //    y si sigue fallando re-pedimos el mensaje fresco por id (workaround recomendado).
+        // ⚑ Tope por BYTES REALES (no por largo del string base64) y bajo el muro de 1 MiB del WAF
+        //    de Neubox: si el POST pasa de ~1 MiB, el WAF lo corta con 413 y el webhook nunca lo ve.
         if (msg.hasMedia) {
-            try {
-                const media = await msg.downloadMedia();
-                if (media && media.data.length < 5 * 1024 * 1024) {
+            let media = null, lastErr = null;
+            for (let intento = 1; intento <= 3 && !media; intento++) {
+                try {
+                    media = await msg.downloadMedia();
+                    if (!media || !media.data) { media = null; throw new Error('downloadMedia vacío'); }
+                } catch (e) {
+                    lastErr = e;
+                    media = null;
+                    // último intento: re-pedir el mensaje fresco por id antes de rendirse
+                    if (intento === 2) {
+                        try {
+                            const fresh = await client.getMessageById(msg.id._serialized);
+                            if (fresh) { media = await fresh.downloadMedia(); if (!media || !media.data) media = null; }
+                        } catch (e2) { lastErr = e2; media = null; }
+                    }
+                    if (!media) await new Promise(r => setTimeout(r, 700 * intento));
+                }
+            }
+            if (media && media.data) {
+                const bytes = Buffer.byteLength(media.data, 'base64');   // tamaño decodificado real
+                if (bytes < 900 * 1024) {                                 // < ~900 KB → cabe bajo el WAF de 1 MiB
                     payload.media_mime = media.mimetype;
                     payload.media_filename = media.filename || 'adjunto';
                     payload.media_base64 = media.data;
                 } else {
-                    payload.media_error = 'demasiado grande (>5MB)';
+                    payload.media_error = 'demasiado grande para el webhook (' + Math.round(bytes/1024) + ' KB > 900 KB)';
                 }
-            } catch (e) {
-                payload.media_error = e.message;
+            } else {
+                payload.media_error = lastErr ? ((lastErr.name || 'Error') + ': ' + (lastErr.message || String(lastErr))) : 'downloadMedia sin resultado';
             }
         }
 
