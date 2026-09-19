@@ -317,6 +317,65 @@ app.post('/logout', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// PROXY WhatsApp Cloud API (Meta) · 19-sep-2026
+// El WAF de Neubox (Imunify360) devuelve 403 al POST directo de Meta a wa_webhook.php por su JSON
+// anidado, y Neubox no expone el control del WAF. Recibimos aquí (Railway no tiene WAF) y reenviamos
+// PLANO (form-encoded) a wa_meta_relay.php, que el WAF sí acepta. La RESPUESTA la manda la suite
+// por Meta Cloud directo — no vuelve a pasar por aquí. La media la baja la suite por media_id.
+// ═══════════════════════════════════════════════════════════════════════
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'hab-nx04-wa-7q3v9k2m';
+const META_RELAY_URL = (HABITARE_WEBHOOK || '').replace(/whatsapp_webhook\.php.*$/, 'wa_meta_relay.php');
+
+// Verificación del webhook de Meta (GET con hub.challenge)
+app.get('/meta-webhook', (req, res) => {
+    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === META_VERIFY_TOKEN) {
+        console.log('✅ meta-webhook verificado');
+        return res.status(200).send(req.query['hub.challenge']);
+    }
+    return res.sendStatus(403);
+});
+
+// Eventos entrantes de Meta → reenvío PLANO a la suite
+app.post('/meta-webhook', async (req, res) => {
+    res.sendStatus(200); // acuse inmediato a Meta (evita reintentos)
+    try {
+        for (const entry of (req.body?.entry || [])) {
+            for (const change of (entry.changes || [])) {
+                const value = change.value || {};
+                const name = value.contacts?.[0]?.profile?.name || '';
+                for (const msg of (value.messages || [])) {
+                    const type = msg.type || 'text';
+                    let text = '', media_id = '', media_mime = '';
+                    if (type === 'text') {
+                        text = msg.text?.body || '';
+                    } else if (['image', 'document', 'audio', 'video', 'sticker'].includes(type)) {
+                        text = msg[type]?.caption || '';
+                        media_id = msg[type]?.id || '';
+                        media_mime = msg[type]?.mime_type || '';
+                    }
+                    const form = new URLSearchParams({
+                        secret: SHARED_SECRET, from: msg.from || '', name, type, text, media_id, media_mime,
+                    });
+                    try {
+                        const r = await fetch(META_RELAY_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: form.toString(),
+                            signal: AbortSignal.timeout(30000),
+                        });
+                        console.log(`↪️  meta-relay ${type} from=${msg.from} → HTTP ${r.status}`);
+                    } catch (e) {
+                        console.error('❌ meta-relay error:', e.message);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error('❌ meta-webhook parse error:', e.message);
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // Arranque
 // ═══════════════════════════════════════════════════════════════════════
 // Escuchar en 0.0.0.0 explícito (Docker) + puerto fijo
